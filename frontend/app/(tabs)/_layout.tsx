@@ -46,7 +46,7 @@ export default function TabsLayout() {
 
       {/* 4º: PERFIL */}
       <Tabs.Screen
-        name="perfil/index"
+        name="perfil"
         options={{
           title: "Perfil",
           tabBarIcon: ({ color, size }) => (
