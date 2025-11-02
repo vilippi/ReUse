@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.routers import auth, users
+from app.routers.anuncios import listings
 from app.db.mongo import get_db
 
 app = FastAPI(title="APP API", openapi_url=f"{settings.API_PREFIX}/openapi.json")
@@ -19,8 +20,12 @@ async def on_startup():
     db = await get_db()
     await db["users"].create_index("email", unique=True)
 
+# AUTH
 app.include_router(auth.router, prefix=settings.API_PREFIX)
 app.include_router(users.router, prefix=settings.API_PREFIX)
+
+# ANUNCIOS
+app.include_router(listings.router)
 
 @app.get("/")
 async def root():
