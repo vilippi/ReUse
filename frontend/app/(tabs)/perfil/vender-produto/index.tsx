@@ -2,23 +2,40 @@
 import React, { useMemo, useState } from "react";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
-    Alert,
-    Image,
-    Platform,
-    Pressable,
-    ScrollView,
-    StatusBar,
-    StyleSheet,
-    Switch,
-    Text,
-    TextInput,
-    View,
+  Alert,
+  Image,
+  Platform,
+  Pressable,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { CATEGORIAS, CONDICOES, PRECO_SUGERIDO } from "./_mock";
+import { createListing } from "@/lib/marketplace";
+import { uploadImages } from "@/lib/upload";
 
 type Foto = { uri: string };
+
+// valida formato de ObjectId (24 hex)
+const isObjectId = (s: string) => /^[a-f0-9]{24}$/i.test(s || "");
+
+// tenta resolver o ObjectId real da categoria a partir do item selecionado
+function resolveCategoryId(selectedId: string): string | null {
+  if (isObjectId(selectedId)) return selectedId;
+  // procura item correspondente no mock
+  const cat = (CATEGORIAS as any[]).find(
+    (c) => c.id === selectedId || c.value === selectedId || c.slug === selectedId
+  );
+  if (!cat) return null;
+  const candidate = String(cat._id || cat.objectId || cat.categoryId || "");
+  return isObjectId(candidate) ? candidate : null;
+}
 
 export default function VenderProduto() {
   const [fotos, setFotos] = useState<Foto[]>([]);
@@ -29,8 +46,8 @@ export default function VenderProduto() {
   const [descricao, setDescricao] = useState("");
   const [doacao, setDoacao] = useState(false);
   const [retiradaLocal, setRetiradaLocal] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
 
-  // máscara simples R$
   const precoNumber = useMemo(() => {
     const clean = preco.replace(/[^\d]/g, "");
     return Number((Number(clean) / 100).toFixed(2));
@@ -38,10 +55,7 @@ export default function VenderProduto() {
 
   function formatCurrencyBRL(v: number) {
     try {
-      return v.toLocaleString("pt-BR", {
-        style: "currency",
-        currency: "BRL",
-      });
+      return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
     } catch {
       return `R$ ${v.toFixed(2)}`;
     }
@@ -69,10 +83,7 @@ export default function VenderProduto() {
 
     if (!result.canceled) {
       const selected = result.assets.map((a) => ({ uri: a.uri }));
-      setFotos((prev) => {
-        const merged = [...prev, ...selected].slice(0, 5); // até 5 fotos
-        return merged;
-      });
+      setFotos((prev) => [...prev, ...selected].slice(0, 5));
     }
   }
 
@@ -108,27 +119,51 @@ export default function VenderProduto() {
       return;
     }
 
-    // Aqui você integraria com sua API:
-    // const body = new FormData();
-    // fotos.forEach((f, i) => body.append("imagens", { uri: f.uri, name: `foto_${i}.jpg`, type: "image/jpeg" } as any));
-    // body.append("titulo", titulo);
-    // body.append("categoria", categoria);
-    // body.append("preco", doacao ? "0" : String(precoNumber));
-    // body.append("condicao", condicao);
-    // body.append("descricao", descricao);
-    // body.append("retiradaLocal", String(retiradaLocal));
-    //
-    // await fetch("/api/anuncios", { method: "POST", body });
+    // Resolve o ObjectId real da categoria
+    const categoryId = resolveCategoryId(categoria);
+    if (!categoryId) {
+      Alert.alert(
+        "Categoria inválida",
+        "Não foi possível determinar o ID da categoria.\n" +
+          "Dica: no CATEGORIAS inclua `_id` (ObjectId) em cada item ou use diretamente o _id como valor."
+      );
+      return;
+    }
 
-    Alert.alert("Sucesso", "Seu anúncio foi publicado!");
-    limpar();
+    // Apenas URLs http/https (backend não acessa file://)
+    const imageUrls = fotos.map((f) => f.uri).filter((u) => /^https?:\/\//i.test(u));
+
+    try {
+      setSubmitting(true);
+
+      // 1) sobe imagens locais -> recebe URLs http(s)
+      const imageUrls = await uploadImages(fotos.map((f) => f.uri));
+
+      // 2) cria anúncio usando as URLs retornadas
+      const payload = {
+        title: titulo.trim(),
+        description: descricao.trim(),
+        price: doacao ? 0 : precoNumber,
+        stock: 1,
+        categoryId: "671f570f5b2f4f0a8d5b9c11", // mock fixo que você pediu
+        images: imageUrls, // agora URLs reais
+        status: "active",
+      } as const;
+
+      await createListing(payload);
+      Alert.alert("Sucesso", "Seu anúncio foi publicado!");
+      limpar();
+    } catch (e: any) {
+      Alert.alert("Erro", String(e?.message ?? "Falha ao publicar anúncio"));
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   function sugerirPreco() {
     if (!categoria) return;
-    const sug = PRECO_SUGERIDO[categoria];
+    const sug = (PRECO_SUGERIDO as any)[categoria];
     if (sug) {
-      // coloca já formatado
       const cents = Math.round(sug * 100);
       const val = (cents / 100).toFixed(2).replace(".", ",");
       setPreco(`R$ ${val}`);
@@ -180,7 +215,7 @@ export default function VenderProduto() {
         {/* Categoria */}
         <Text style={styles.label}>Categoria</Text>
         <View style={styles.pills}>
-          {CATEGORIAS.map((c) => {
+          {CATEGORIAS.map((c: any) => {
             const active = c.id === categoria;
             return (
               <Pressable
@@ -216,13 +251,10 @@ export default function VenderProduto() {
                 pressed && canSugerir && { opacity: 0.7 },
               ]}
             >
-              <Text style={{ color: canSugerir ? "#0ea5e9" : "#9ca3af", fontWeight: "600" }}>
-                Sugerir preço
-              </Text>
+              <Text style={{ color: canSugerir ? "#0ea5e9" : "#9ca3af", fontWeight: "600" }}>Sugerir preço</Text>
             </Pressable>
           </View>
 
-          {/* Help text abaixo do título */}
           {!categoria && (
             <View style={{ flexDirection: "row", alignItems: "center" }}>
               <Ionicons name="information-circle-outline" size={16} color="#9ca3af" />
@@ -233,8 +265,7 @@ export default function VenderProduto() {
           )}
         </View>
 
-
-        <View style={{ flexDirection: "row", gap: 10, marginTop:10 }}>
+        <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
           <View style={{ flex: 1 }}>
             <TextInput
               value={doacao ? "R$ 0,00" : preco}
@@ -254,7 +285,7 @@ export default function VenderProduto() {
         {/* Condição */}
         <Text style={styles.label}>Condição</Text>
         <View style={styles.pills}>
-          {CONDICOES.map((c) => {
+          {CONDICOES.map((c: any) => {
             const active = c.id === condicao;
             return (
               <Pressable
@@ -283,9 +314,7 @@ export default function VenderProduto() {
         {/* Opções de entrega */}
         <View style={[styles.cardRow, { marginTop: 8 }]}>
           <Ionicons name="navigate-circle-outline" size={20} color="#6b7280" />
-          <Text style={{ flex: 1, marginLeft: 8, color: "#111827", fontWeight: "600" }}>
-            Retirada no local
-          </Text>
+          <Text style={{ flex: 1, marginLeft: 8, color: "#111827", fontWeight: "600" }}>Retirada no local</Text>
           <Switch
             value={retiradaLocal}
             onValueChange={setRetiradaLocal}
@@ -299,21 +328,27 @@ export default function VenderProduto() {
             {doacao ? "Anúncio de doação" : `Preço: ${formatCurrencyBRL(precoNumber)}`}
           </Text>
           <Text style={styles.resumoText}>
-            {categoria ? `Categoria: ${CATEGORIAS.find((c) => c.id === categoria)?.label}` : "Sem categoria"}
+            {categoria ? `Categoria: ${CATEGORIAS.find((c: any) => c.id === categoria)?.label}` : "Sem categoria"}
           </Text>
           <Text style={styles.resumoText}>
-            {condicao ? `Condição: ${CONDICOES.find((c) => c.id === condicao)?.label}` : "Sem condição"}
+            {condicao ? `Condição: ${CONDICOES.find((c: any) => c.id === condicao)?.label}` : "Sem condição"}
           </Text>
         </View>
 
         {/* Ações */}
         <View style={{ flexDirection: "row", gap: 12, marginTop: 12 }}>
-          <Pressable style={[styles.btn, styles.btnOutline]} onPress={limpar}>
+          <Pressable style={[styles.btn, styles.btnOutline]} onPress={limpar} disabled={submitting}>
             <Text style={[styles.btnText, styles.btnTextOutline]}>Limpar</Text>
           </Pressable>
-          <Pressable style={[styles.btn, styles.btnPrimary]} onPress={onPublicar}>
+          <Pressable
+            style={[styles.btn, styles.btnPrimary, submitting && { opacity: 0.7 }]}
+            onPress={onPublicar}
+            disabled={submitting}
+          >
             <Ionicons name="cloud-upload-outline" size={18} color="#fff" />
-            <Text style={[styles.btnText, { color: "#fff", marginLeft: 8 }]}>Publicar</Text>
+            <Text style={[styles.btnText, { color: "#fff", marginLeft: 8 }]}>
+              {submitting ? "Publicando..." : "Publicar"}
+            </Text>
           </Pressable>
         </View>
       </ScrollView>
@@ -345,11 +380,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
 
-  fotosWrap: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-  },
+  fotosWrap: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   fotoBox: {
     width: 88,
     height: 88,
@@ -360,16 +391,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  fotoAdd: {
-    borderWidth: 1,
-    borderStyle: "dashed",
-    borderColor: "#0ea5e9",
-  },
-  foto: {
-    width: "100%",
-    height: "100%",
-    resizeMode: "cover",
-  },
+  fotoAdd: { borderWidth: 1, borderStyle: "dashed", borderColor: "#0ea5e9" },
+  foto: { width: "100%", height: "100%", resizeMode: "cover" },
   fotoRemove: {
     position: "absolute",
     right: 4,
@@ -393,11 +416,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
 
-  pills: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
+  pills: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   pill: {
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -406,10 +425,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#e5e7eb",
   },
-  pillActive: {
-    backgroundColor: "#e0f2fe",
-    borderColor: "#0ea5e9",
-  },
+  pillActive: { backgroundColor: "#e0f2fe", borderColor: "#0ea5e9" },
   pillText: { color: "#111827", fontWeight: "600" },
   pillTextActive: { color: "#0369a1" },
 
@@ -423,10 +439,7 @@ const styles = StyleSheet.create({
     borderColor: "#e5e7eb",
     backgroundColor: "#fff",
   },
-  toggleLabel: {
-    color: "#111827",
-    fontWeight: "600",
-  },
+  toggleLabel: { color: "#111827", fontWeight: "600" },
 
   cardRow: {
     flexDirection: "row",
@@ -447,9 +460,7 @@ const styles = StyleSheet.create({
     borderColor: "#e5e7eb",
     gap: 4,
   },
-  resumoText: {
-    color: "#374151",
-  },
+  resumoText: { color: "#374151" },
 
   btn: {
     flex: 1,
@@ -460,11 +471,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
   },
   btnPrimary: { backgroundColor: "#0ea5e9" },
-  btnOutline: {
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#0ea5e9",
-  },
+  btnOutline: { backgroundColor: "#fff", borderWidth: 1, borderColor: "#0ea5e9" },
   btnText: { fontSize: 16, fontWeight: "700" },
   btnTextOutline: { color: "#0ea5e9" },
 });

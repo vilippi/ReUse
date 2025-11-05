@@ -6,7 +6,7 @@ export const CATEGORIAS = [
     { id: "roupas", label: "Roupas" },
     { id: "esporte", label: "Esportes" },
     { id: "livros", label: "Livros" },
-    { id: "outros", label: "Outros" },
+    { id: "671f570f5b2f4f0a8d5b9c11", label: "Outros" },
 ];
 
 export const CONDICOES = [

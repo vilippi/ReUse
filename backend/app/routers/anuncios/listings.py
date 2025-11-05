@@ -1,8 +1,13 @@
 # app/routers/anuncios/listings.py
 from typing import Annotated, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
+from fastapi import (
+    APIRouter, Depends, HTTPException, status, Query, Path,
+    UploadFile, File, Request
+)
 from bson import ObjectId
 from datetime import datetime, timezone
+import os, shutil
+from uuid import uuid4
 
 from app.models.listing import ListingIn, ListingOut, ListingUpdate
 from app.db.mongo import get_db
@@ -10,12 +15,70 @@ from app.core.deps import get_current_user_id
 
 router = APIRouter(prefix="/listings", tags=["Listings"])
 
+# ===== utils =====
 
-# POST
+def now_utc():
+    return datetime.now(timezone.utc)
+
+def to_object_id_or_400(value: str, field_name: str = "id") -> ObjectId:
+    if not ObjectId.is_valid(value):
+        raise HTTPException(status_code=400, detail=f"{field_name} inválido")
+    return ObjectId(value)
+
+def normalize_image_urls(values: Optional[List[str]]) -> List[str]:
+    """
+    Garante lista de strings http/https. Ignora file:// e vazios.
+    """
+    urls: List[str] = []
+    for v in values or []:
+        try:
+            s = str(v).strip()
+            if s and s.lower().startswith(("http://", "https://")):
+                urls.append(s)
+        except Exception:
+            continue
+    return urls
+
+def base_url(req: Request) -> str:
+    # Ex.: http://192.168.1.21:8000
+    return str(req.base_url).rstrip("/")
+
+def ensure_media_dir() -> str:
+    media_dir = os.path.abspath("media")
+    os.makedirs(media_dir, exist_ok=True)
+    return media_dir
+
+# ===== UPLOAD (novo) =====
+@router.post("/upload", response_model=List[str], status_code=status.HTTP_201_CREATED)
+async def upload_images(
+    request: Request,
+    files: List[UploadFile] = File(...),
+    user_id: Annotated[str, Depends(get_current_user_id)] = None,  # se quiser exigir login
+):
+    """
+    Recebe imagens via multipart e devolve URLs públicas em /media.
+    """
+    media_dir = ensure_media_dir()
+    urls: List[str] = []
+    base = base_url(request)
+
+    for f in files:
+        # nome seguro
+        _, ext = os.path.splitext(f.filename or "")
+        ext = (ext or ".jpg").lower()
+        name = f"{uuid4().hex}{ext}"
+        dest = os.path.join(media_dir, name)
+        with open(dest, "wb") as out:
+            shutil.copyfileobj(f.file, out)
+        urls.append(f"{base}/media/{name}")
+
+    return urls
+
+# ===== CREATE =====
 @router.post("", response_model=ListingOut, status_code=status.HTTP_201_CREATED)
 async def create_listing(
     payload: ListingIn,
-    user_id: Annotated[str, Depends(get_current_user_id)],  # << agora é string
+    user_id: Annotated[str, Depends(get_current_user_id)],
     db = Depends(get_db),
 ):
     listings = db["listings"]
@@ -23,17 +86,19 @@ async def create_listing(
     # sellerId como ObjectId se válido; senão string
     seller_id = ObjectId(user_id) if ObjectId.is_valid(user_id) else user_id
 
+    category_oid = to_object_id_or_400(payload.categoryId, "categoryId")
+
     doc = {
-        "title": payload.title,
-        "description": payload.description,
+        "title": payload.title.strip(),
+        "description": payload.description.strip() if payload.description else "",
         "price": float(payload.price),
         "stock": int(payload.stock),
-        "categoryId": ObjectId(payload.categoryId),
-        "images": list(map(str, payload.images)),
+        "categoryId": category_oid,
+        "images": normalize_image_urls(payload.images),  # filtra apenas http/https
         "status": payload.status,
         "sellerId": seller_id,
-        "createdAt": datetime.now(timezone.utc),
-        "updatedAt": datetime.now(timezone.utc),
+        "createdAt": now_utc(),
+        "updatedAt": now_utc(),
     }
 
     try:
@@ -51,9 +116,8 @@ async def create_listing(
         images=doc["images"],
         status=doc["status"],
     )
-    
-    
-# GET
+
+# ===== LIST =====
 @router.get("", response_model=List[ListingOut])
 async def list_listings(
     user_id: Annotated[str, Depends(get_current_user_id)],
@@ -85,7 +149,7 @@ async def list_listings(
             }
         })
 
-    # Filtro por categoria (aceita string ou ObjectId válido)
+    # Filtro por categoria
     if categoryId:
         match_cat = ObjectId(categoryId) if ObjectId.is_valid(categoryId) else categoryId
         pipeline.append({"$match": {"categoryId": match_cat}})
@@ -99,7 +163,7 @@ async def list_listings(
                 "pipeline": [
                     {"$match": {"$expr": {
                         "$or": [
-                            {"$eq": ["$_id", "$$sid"]},   # quando sellerId é ObjectId e users._id também
+                            {"$eq": ["$_id", "$$sid"]},   # quando sellerId é ObjectId
                             {"$eq": ["$id", "$$sid"]},    # quando users.id (string) = sellerId (string)
                         ]
                     }}},
@@ -153,9 +217,8 @@ async def list_listings(
         )
         for d in docs
     ]
-    
-# PATCH
 
+# ===== PATCH =====
 @router.patch("/{listing_id}", response_model=ListingOut)
 async def update_listing(
     listing_id: Annotated[str, Path(..., description="ID do anúncio (ObjectId)")],
@@ -165,30 +228,26 @@ async def update_listing(
 ):
     listings = db["listings"]
 
-    # 1) validar id
     if not ObjectId.is_valid(listing_id):
         raise HTTPException(status_code=400, detail="listing_id inválido")
 
     _id = ObjectId(listing_id)
 
-    # 2) buscar anúncio e checar propriedade
     doc = await listings.find_one({"_id": _id})
     if not doc:
         raise HTTPException(status_code=404, detail="Anúncio não encontrado")
 
-    # sellerId pode estar salvo como ObjectId ou string — precisamos comparar com ambos
+    # checa propriedade (sellerId pode ser ObjectId ou string)
     is_owner = False
     if "sellerId" in doc:
         if isinstance(doc["sellerId"], ObjectId) and ObjectId.is_valid(user_id):
             is_owner = (doc["sellerId"] == ObjectId(user_id))
-        # também cobre caso sellerId seja string ou user_id não seja ObjectId
         is_owner = is_owner or (str(doc["sellerId"]) == str(user_id))
 
     if not is_owner:
         raise HTTPException(status_code=403, detail="Você não tem permissão para editar este anúncio")
 
-    # 3) construir update set
-    to_set = {"updatedAt": datetime.now(timezone.utc)}
+    to_set = {"updatedAt": now_utc()}
     if payload.title is not None:
         to_set["title"] = payload.title
     if payload.description is not None:
@@ -198,20 +257,17 @@ async def update_listing(
     if payload.stock is not None:
         to_set["stock"] = int(payload.stock)
     if payload.images is not None:
-        to_set["images"] = [str(u) for u in payload.images]
+        to_set["images"] = normalize_image_urls(payload.images)
     if payload.status is not None:
         to_set["status"] = payload.status
     if payload.categoryId is not None:
-        if not ObjectId.is_valid(payload.categoryId):
-            raise HTTPException(status_code=400, detail="categoryId inválido")
-        to_set["categoryId"] = ObjectId(payload.categoryId)
+        to_set["categoryId"] = to_object_id_or_400(payload.categoryId, "categoryId")
 
     try:
         await listings.update_one({"_id": _id}, {"$set": to_set})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao atualizar: {e}")
 
-    # 4) retornar no formato ListingOut
     updated = await listings.find_one({"_id": _id})
     return ListingOut(
         id=str(updated["_id"]),
@@ -222,5 +278,4 @@ async def update_listing(
         categoryId=str(updated.get("categoryId")) if updated.get("categoryId") is not None else "",
         images=[str(u) for u in (updated.get("images") or [])],
         status=updated.get("status", "active"),
-        # sellerName é opcional no ListingOut; no PATCH não fazemos lookup — mantém None
     )
