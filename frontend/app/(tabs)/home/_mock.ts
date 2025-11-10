@@ -2,36 +2,36 @@ import { Produto } from "@/components/home/ProductCard";
 import { ImageSourcePropType } from "react-native";
 
 export const MOCK: Produto[] = [
-    {
-        id: "1",
-        titulo: "iPhone 13 128GB Meia-noite",
-        preco: 2999.9,
-        imagem: require("../../../assets/products/iphone13.jpg") as ImageSourcePropType,
-        freteGratis: true,
-        parcelas: 10,
-    },
-    {
-        id: "2",
-        titulo: "Echo Dot (5ª geração) Alexa",
-        preco: 229.9,
-        imagem: require("../../../assets/products/echodot5a.jpg") as ImageSourcePropType,
-        freteGratis: true,
-        parcelas: 10,
-    },
-    {
-        id: "3",
-        titulo: "Garrafa Térmica Inox 950ml",
-        preco: 139.9,
-        imagem: require("../../../assets/products/garrafatermicainox950ml.webp") as ImageSourcePropType,
-        freteGratis: false,
-        parcelas: 6,
-    },
-    {
-        id: "4",
-        titulo: "Fone Bluetooth Over-Ear",
-        preco: 179.9,
-        imagem: require("../../../assets/products/foneblueoverear.webp") as ImageSourcePropType,
-        freteGratis: true,
-        parcelas: 10,
-    },
+  {
+    id: "r1",
+    titulo: "Fardos de Papelão Reciclado (50kg)",
+    preco: 249.9,
+    imagem: require("../../../assets/products/papelao_reciclado.webp") as ImageSourcePropType,
+    freteGratis: false,
+    parcelas: 6,
+  },
+  {
+    id: "r2",
+    titulo: "Flakes de PET Transparente (25kg)",
+    preco: 189.9,
+    imagem: require("../../../assets/products/pet_flakes_transparente.jpg") as ImageSourcePropType,
+    freteGratis: false,
+    parcelas: 6,
+  },
+  {
+    id: "r3",
+    titulo: "Latas de Alumínio Prensadas (20kg)",
+    preco: 379.9,
+    imagem: require("../../../assets/products/latas_aluminio_prensadas.webp") as ImageSourcePropType,
+    freteGratis: true,
+    parcelas: 10,
+  },
+  {
+    id: "r4",
+    titulo: "Vidro Verde Moído (30kg)",
+    preco: 129.9,
+    imagem: require("../../../assets/products/vidro_verde_moido.jpg") as ImageSourcePropType,
+    freteGratis: false,
+    parcelas: 6,
+  },
 ];

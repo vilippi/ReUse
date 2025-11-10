@@ -5,6 +5,8 @@ from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.routers import auth, users
 from app.routers.anuncios import listings
+from app.routers import favorites
+from app.routers import orders
 from app.db.mongo import get_db
 
 # --- helpers ---
@@ -50,9 +52,11 @@ app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
 
 # --- rotas com prefixo ---
 api = APIRouter(prefix=API_PREFIX)  # ex: "/api" ou ""
-api.include_router(auth.router)     # /api/auth/...
-api.include_router(users.router)    # /api/users/...
-api.include_router(listings.router) # /api/listings/...
+api.include_router(auth.router)     
+api.include_router(users.router)    
+api.include_router(listings.router) 
+app.include_router(favorites.router)
+app.include_router(orders.router)
 
 # health simples
 @api.get("/health")

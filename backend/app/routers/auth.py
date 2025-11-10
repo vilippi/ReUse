@@ -11,7 +11,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 async def register_user(payload: UserCreate, db = Depends(get_db_dep)):
     col = db["users"]
 
-    # garanta índices únicos (faça uma vez no startup da app; deixei aqui por praticidade)
+    # garanta índices únicos
     await col.create_index("email", unique=True)
     await col.create_index("cpf", unique=True)
 
